@@ -1,0 +1,12 @@
+{
+  "name": "sports-jockey-frontend",
+  "version": "1.0.0",
+  "description": "Sports Jockey frontend application",
+  "scripts": {
+    "dev": "npm --prefix demo run dev --",
+    "prebuild": "npm --prefix demo ci --include=dev",
+    "build": "npm --prefix demo run build -- --outDir ../dist --emptyOutDir"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

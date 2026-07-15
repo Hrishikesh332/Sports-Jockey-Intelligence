@@ -1,0 +1,189 @@
+SPORTS_HIGHLIGHT_INGESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "score_changes": {
+            "type": "array",
+            "description": "Every scoring event in chronological order",
+            "items": {
+                "type": "object",
+                "description": "A scoring event",
+                "properties": {
+                    "timestamp": {"type": "string", "description": "When the scoring event starts"},
+                    "team": {"type": "string", "description": "Team that scored"},
+                    "score_after_play": {"type": "string", "description": "Score after the scoring event"},
+                    "play_description": {"type": "string", "description": "What happened in the scoring play"},
+                    "players_involved": {
+                        "type": "array",
+                        "description": "Players directly involved in the scoring play",
+                        "items": {"type": "string", "description": "Player name, number, or visible identifier"},
+                    },
+                },
+            },
+        },
+        "key_plays": {
+            "type": "array",
+            "description": "Important non-scoring plays that change momentum or explain scoring context",
+            "items": {
+                "type": "object",
+                "description": "A key play",
+                "properties": {
+                    "timestamp": {"type": "string", "description": "When the key play starts"},
+                    "play_type": {"type": "string", "description": "Type of play"},
+                    "outcome": {"type": "string", "description": "Result of the play"},
+                    "context": {"type": "string", "description": "Why the play matters to the match story"},
+                },
+            },
+        },
+        "emotional_moments": {
+            "type": "array",
+            "description": "Celebrations, disappointment, bench reactions, player emotion, and tension",
+            "items": {
+                "type": "object",
+                "description": "An emotional match moment",
+                "properties": {
+                    "timestamp": {"type": "string", "description": "When the emotional moment starts"},
+                    "emotion": {"type": "string", "description": "Dominant emotion shown"},
+                    "subjects": {"type": "string", "description": "Who or what is shown"},
+                    "match_context": {"type": "string", "description": "How this moment connects to the game"},
+                },
+            },
+        },
+        "fan_reactions": {
+            "type": "array",
+            "description": "Crowd, fan, stadium, mascot, broadcast, and atmosphere moments",
+            "items": {
+                "type": "object",
+                "description": "A fan or atmosphere moment",
+                "properties": {
+                    "timestamp": {"type": "string", "description": "When the fan moment starts"},
+                    "reaction": {"type": "string", "description": "Visible or audible reaction"},
+                    "visual_context": {"type": "string", "description": "What is visible in the shot"},
+                    "connected_play": {"type": "string", "description": "The nearby play or story beat it supports"},
+                },
+            },
+        },
+        "broadcast_context": {
+            "type": "array",
+            "description": "Scoreboard shots, replays, graphics, announcer cues, and contextual footage",
+            "items": {
+                "type": "object",
+                "description": "A broadcast context moment",
+                "properties": {
+                    "timestamp": {"type": "string", "description": "When the context moment starts"},
+                    "context_type": {"type": "string", "description": "Type of broadcast or contextual cue"},
+                    "details": {"type": "string", "description": "Details visible or audible in the footage"},
+                },
+            },
+        },
+    },
+}
+
+HIGHLIGHT_CLIP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "start_time": {"type": "string"},
+        "end_time": {"type": "string"},
+        "video_reference": {"type": "string"},
+        "clip_type": {"type": "string"},
+        "category": {"type": "string", "description": "One of the required top-level reel category keys."},
+        "source_type": {
+            "type": "string",
+            "description": "Use stats for factual baseline clips; reserve semantic and stats_semantic for enhanced lanes.",
+            "enum": ["stats", "semantic", "stats_semantic"],
+        },
+        "description": {"type": "string", "description": "Concise factual clip summary grounded in the video."},
+        "score_context": {"type": "string", "description": "Score, result, race/status, or game-state context when visible or audible."},
+        "selection_reason": {"type": "string", "description": "Why this exact clip belongs in its category."},
+        "confidence": {"type": "number", "minimum": 0.01, "maximum": 1},
+        "explainability_label": {"type": "string"},
+        "evidence_summary": {"type": "string"},
+        "visual_evidence": {
+            "type": "array",
+            "description": "Visual evidence for enhanced lanes only. Return an empty array for standard_stats clips.",
+            "items": {"type": "string"},
+        },
+        "audio_evidence": {
+            "type": "array",
+            "description": "Audio evidence for enhanced lanes only. Return an empty array for standard_stats clips.",
+            "items": {"type": "string"},
+        },
+        "transcript_evidence": {"type": "array", "items": {"type": "string"}},
+        "timeline_rationale": {"type": "string"},
+        "editorial_use": {"type": "string"},
+    },
+    "required": [
+        "start_time",
+        "end_time",
+        "video_reference",
+        "clip_type",
+        "category",
+        "source_type",
+        "description",
+        "score_context",
+        "selection_reason",
+        "confidence",
+        "explainability_label",
+        "evidence_summary",
+        "visual_evidence",
+        "audio_evidence",
+        "transcript_evidence",
+        "timeline_rationale",
+        "editorial_use",
+    ],
+    "additionalProperties": False,
+}
+
+HIGHLIGHT_CATEGORY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "objective": {"type": "string"},
+        "clips": {
+            "type": "array",
+            "items": HIGHLIGHT_CLIP_SCHEMA,
+        },
+        "assembly_notes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "objective", "clips", "assembly_notes"],
+    "additionalProperties": False,
+}
+
+HIGHLIGHT_REEL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "match_summary": {"type": "string"},
+        "standard_stats": {
+            **HIGHLIGHT_CATEGORY_SCHEMA,
+            "description": (
+                "Sparse WSC-style baseline. Include only explicit score changes, official stats, final results, "
+                "race order/status, penalties, cards, fouls, timeouts, substitutions, or scoreboard/stat-sheet facts. "
+                "Do not include semantic interpretation, emotion, celebration, crowd reaction, or momentum language."
+            ),
+        },
+        "best_plays": {
+            **HIGHLIGHT_CATEGORY_SCHEMA,
+            "description": "Enhanced Jockey lane for decisive plays with semantic context.",
+        },
+        "emotional_moments": {
+            **HIGHLIGHT_CATEGORY_SCHEMA,
+            "description": "Enhanced Jockey lane for visible emotion, tension, celebration, relief, or disappointment.",
+        },
+        "fan_experience": {
+            **HIGHLIGHT_CATEGORY_SCHEMA,
+            "description": "Enhanced Jockey lane for crowd, fan, stadium, broadcast, and atmosphere moments.",
+        },
+        "behind_the_scenes": {
+            **HIGHLIGHT_CATEGORY_SCHEMA,
+            "description": "Enhanced Jockey lane for bench, sideline, warmup, huddle, tunnel, or production context.",
+        },
+    },
+    "required": [
+        "match_summary",
+        "standard_stats",
+        "best_plays",
+        "emotional_moments",
+        "fan_experience",
+        "behind_the_scenes",
+    ],
+    "additionalProperties": False,
+}
