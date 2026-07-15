@@ -9,6 +9,8 @@
   />
 </p>
 
+> **UI note:** The interface in this open-source repository is intentionally different from the interface available at the deployed App. The repository reflects the public source and local development experience, while the deployed app may use a different layout, styling, components, or feature set.
+
 Search, analyze, and curate sports footage with TwelveLabs video understanding like a production workspace.
 
 Sports Jockey combines Marengo semantic search, Pegasus 1.5 selected-clip analysis, and Jockey knowledge-store reasoning so producers can move from a long source video to grounded clips, entity evidence, tag reels, and saved metadata.

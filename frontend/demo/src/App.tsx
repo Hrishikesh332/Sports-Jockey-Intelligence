@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
 
 import Hls from 'hls.js'
-import type { CSSProperties, DragEvent, MouseEvent, ReactNode } from 'react'
+import type { ChangeEvent, CSSProperties, DragEvent, MouseEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import logoFull from '../../assets/logo-full.svg?raw'
 import logoMark from '../../assets/logo-mark.svg?raw'
 import overviewCompareLift from '../../assets/overview-compare-lift.png'
 import overviewHeroJockey from '../../assets/overview-hero-jockey.png'
+import workflowArchitecture from '../../assets/workflow-architecture.png'
 
 import analyzeIcon from '../../icons/analyze.svg?raw'
 import arrowBoxRightIcon from '../../icons/arrow-box-right.svg?raw'
@@ -398,6 +399,7 @@ type MarengoSearchResponse = {
   provider?: 'marengo'
   model?: string
   query: string
+  query_kind?: 'text' | 'image' | 'entity'
   query_interpretation: string
   total_results: number
   search_options?: string[]
@@ -408,9 +410,28 @@ type MarengoSearchResponse = {
 type DiscoverSearchSession = {
   searchQuery: string
   submittedSearchQuery: string
+  searchKind: 'text' | 'image' | 'entity'
   searchResponse: MarengoSearchResponse | null
   activePreviewId: string | null
   searchError: string
+}
+
+type SearchEntity = {
+  id: string
+  name: string
+  description?: string | null
+  status?: string | null
+  image_url?: string | null
+  metadata?: Record<string, unknown>
+}
+
+type SearchEntityListResponse = {
+  entities: SearchEntity[]
+  total_results?: number
+}
+
+type SearchEntityCreateResponse = {
+  entity?: SearchEntity | null
 }
 
 type WorkspaceUiSession = {
@@ -667,7 +688,10 @@ const marengoSearchPresets = [
   'fan going wild in the stands',
   'goalkeeper diving save',
   'coach sideline reaction',
-  'best play moment full emotion',
+  'missed goal player disappointment',
+  'game-changing play and the reactions after',
+  'fan holding a sign in the crowd',
+  'sad fans reacting in the crowd',
 ]
 
 const navItems: Array<{ key: ViewKey; label: string; icon: string }> = [
@@ -790,6 +814,7 @@ function emptyDiscoverSearchSession(): DiscoverSearchSession {
   return {
     searchQuery: '',
     submittedSearchQuery: '',
+    searchKind: 'text',
     searchResponse: null,
     activePreviewId: null,
     searchError: '',
@@ -808,6 +833,7 @@ function loadDiscoverSearchSessions(): Record<string, DiscoverSearchSession> {
       sessions[key.slice(DISCOVER_SESSION_PREFIX.length)] = {
         ...emptyDiscoverSearchSession(),
         ...parsed,
+        searchKind: parsed.searchKind === 'image' || parsed.searchKind === 'entity' ? parsed.searchKind : 'text',
         searchResponse: parsed.searchResponse && typeof parsed.searchResponse === 'object' ? parsed.searchResponse : null,
       }
     } catch {
@@ -972,8 +998,8 @@ function pathForView(view: ViewKey) {
 
 function navButtonClass(currentView: ViewKey, itemView: ViewKey) {
   return currentView === itemView
-    ? 'border-brand-charcoal bg-brand-charcoal text-white shadow-[0_1px_4px_rgba(29,28,27,0.18)]'
-    : 'border-border bg-surface text-text-secondary hover:border-accent hover:bg-accent-light hover:text-brand-charcoal'
+    ? 'border-transparent bg-transparent text-brand-charcoal'
+    : 'border-transparent bg-transparent text-text-secondary hover:border-transparent hover:bg-card hover:text-brand-charcoal'
 }
 
 function App() {
@@ -1749,6 +1775,7 @@ function App() {
     updateDiscoverSession(selectedTag, {
       searchQuery: TUTORIAL_DISCOVER_QUERY,
       submittedSearchQuery: TUTORIAL_DISCOVER_QUERY,
+      searchKind: 'text',
       searchResponse: null,
       searchError: '',
       activePreviewId: null,
@@ -1948,7 +1975,7 @@ function App() {
           ref={headerRef}
           className="app-header sticky top-0 z-50 border-b border-border bg-surface shadow-[0_1px_0_rgba(29,28,27,0.04)]"
         >
-          <div className="app-header-inner mx-auto w-full max-w-[1440px]">
+          <div className="app-header-inner mx-auto w-full max-w-[1920px]">
             <div className="app-header-brand">
               <button
                 type="button"
@@ -2545,7 +2572,13 @@ function ProducerCockpit({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-6 px-6 py-6">
+    <div className="dashboard-page-shell mx-auto flex w-full max-w-[1920px] flex-1 items-start gap-5 px-4 py-5 sm:px-6 sm:py-6">
+      <WorkspaceSidebar
+        compact={false}
+        reels={reels}
+        entityCount={entityTracking?.entities.length || 0}
+      />
+      <div className="dashboard-page-main min-w-0 flex-1">
       <StatusStrip
         loadingGames={loadingGames}
         gamesError={gamesError}
@@ -2689,7 +2722,7 @@ function ProducerCockpit({
 
           {showProductionTools && selectedGame && reels && (
             <section className="flex min-w-0 flex-col gap-4">
-              <div className="grid min-w-0 gap-6 border-t border-border-light pt-4">
+              <div id="workspace-saved" className="grid min-w-0 gap-6 border-t border-border-light pt-4">
                 {activeVideoName && enhancedCategory && (
                   <ReelBuilder
                     game={selectedGame}
@@ -2717,6 +2750,7 @@ function ProducerCockpit({
 
         {showExplainabilityRail && (
           <aside
+            id="workspace-explainability"
             className={[
               'flex min-w-0 flex-col gap-6',
               explainRailCollapsed
@@ -2742,7 +2776,119 @@ function ProducerCockpit({
           </aside>
         )}
       </div>
+      </div>
     </div>
+  )
+}
+
+function WorkspaceSidebar({
+  compact = false,
+  reels,
+  entityCount,
+}: {
+  compact?: boolean
+  reels?: HighlightReels
+  entityCount: number
+}) {
+  const [collapsed, setCollapsed] = useState(compact)
+  const [activeTarget, setActiveTarget] = useState('semantic-lane')
+
+  useEffect(() => {
+    setCollapsed(compact)
+  }, [compact])
+
+  const laneCount = reels
+    ? reels.best_plays.clips.length
+      + reels.emotional_moments.clips.length
+      + reels.fan_experience.clips.length
+      + reels.behind_the_scenes.clips.length
+    : 0
+  const sections = [
+    {
+      title: 'Signals',
+      count: 4,
+      items: [
+        { id: 'semantic-lane', label: 'Semantic lanes', detail: 'Best, emotion, fans, BTS', icon: 'search-v2', tone: 'green', count: 4 },
+        { id: 'workspace-details', label: 'Source player', detail: 'Compare source and Jockey lift', icon: 'play-boxed', tone: 'neutral', count: null },
+        { id: 'workspace-explainability', label: 'Explainability', detail: 'Proof, timing, edit fit', icon: 'checkmark', tone: 'green', count: null },
+        { id: 'entity-tracking', label: 'Entities', detail: 'People and links', icon: 'entity-collection', tone: 'blue', count: entityCount || null },
+      ],
+    },
+    {
+      title: 'Outputs',
+      count: 3,
+      items: [
+        { id: 'assembly-highlights', label: 'Assembly', detail: 'Playable cut', icon: 'play-boxed', tone: 'green', count: laneCount || null },
+        { id: 'tag-reels', label: 'Tag reels', detail: 'Format-ready clips', icon: 'list', tone: 'green', count: reels?.behind_the_scenes.clips.length || null },
+        { id: 'workspace-saved', label: 'Saved work', detail: 'Clips and metadata', icon: 'document-list', tone: 'pink', count: null },
+      ],
+    },
+  ]
+
+  const navigateTo = (target: string) => {
+    setActiveTarget(target)
+    document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  return (
+    <aside className={['workspace-sidebar hidden shrink-0 lg:block', collapsed ? 'workspace-sidebar--collapsed' : ''].join(' ')}>
+      <div className="workspace-sidebar-card">
+        <div className="workspace-sidebar-heading">
+          {!collapsed && (
+            <div className="workspace-sidebar-heading-copy">
+              <p>Navigate</p>
+              <h2>Sections</h2>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setCollapsed((value) => !value)}
+            className="workspace-sidebar-collapse"
+            aria-label={collapsed ? 'Expand dashboard navigation' : 'Collapse dashboard navigation'}
+            title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          >
+            <AppIcon name="collapse" className={['h-4 w-4', collapsed ? 'rotate-180' : ''].join(' ')} />
+          </button>
+        </div>
+
+        {sections.map((group) => (
+          <section key={group.title} className="workspace-sidebar-group">
+            {!collapsed && (
+              <div className="workspace-sidebar-group-label">
+                <span>{group.title}</span>
+                <span>{group.count}</span>
+              </div>
+            )}
+            <div className="workspace-sidebar-items">
+              {group.items.map((item) => {
+                const active = activeTarget === item.id
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => navigateTo(item.id)}
+                    className={['workspace-sidebar-item', active ? 'workspace-sidebar-item--active' : ''].join(' ')}
+                    aria-current={active ? 'location' : undefined}
+                    title={`${item.label} · ${item.detail}`}
+                  >
+                    <span className={['workspace-sidebar-icon', `workspace-sidebar-icon--${item.tone}`].join(' ')}>
+                      <AppIcon name={item.icon} className="h-4 w-4" />
+                    </span>
+                    {!collapsed && (
+                      <span className="workspace-sidebar-item-copy">
+                        <span className="workspace-sidebar-item-title">{item.label}</span>
+                        <span className="workspace-sidebar-item-detail">{item.detail}</span>
+                      </span>
+                    )}
+                    {!collapsed && item.count != null && <span className="workspace-sidebar-item-count">{item.count}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    </aside>
   )
 }
 
@@ -2755,7 +2901,7 @@ function WorkspaceModeBar({
 }) {
   const activeMode = assemblyModes.find((item) => item.key === mode) || assemblyModes[1]
   return (
-    <section className="flex min-w-0 flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
+    <section className="dashboard-mode-bar flex min-w-0 flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-2.5">
         <span
           className={[
@@ -2831,7 +2977,7 @@ function WorkspaceLaneBar({
       data-tour-id="semantic-lane"
       className="semantic-lane-shell sticky top-[var(--sj-header-height)] z-40 w-full border-y border-transparent bg-surface px-4 py-2 shadow-[0_8px_18px_rgba(29,28,27,0.08)] sm:px-6"
     >
-      <div className="relative z-10 mx-auto flex w-full max-w-[1440px] flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+      <div className="relative z-10 mx-auto flex w-full max-w-[1920px] flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-2">
           <span
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border"
@@ -2909,7 +3055,7 @@ function ProductionSection({
   children: ReactNode
 }) {
   return (
-    <section className="min-w-0 border-t border-border-light pt-4">
+    <section className="dashboard-production-section min-w-0 border-t border-border-light pt-4">
       <div className="flex min-w-0 items-start justify-between gap-3 px-1">
         <div className="flex min-w-0 items-start gap-2.5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-accent/70 bg-accent-light text-brand-charcoal shadow-[0_6px_16px_rgba(0,220,130,0.12)]">
@@ -2974,7 +3120,7 @@ function SplitComparisonStage({
       : undefined
 
   return (
-    <section data-tour-id="source-video" className="overflow-hidden rounded-md border border-border-light bg-card shadow-[0_12px_34px_rgba(29,28,27,0.055)] xl:max-h-[calc(100vh-var(--sj-explainability-top)-24px)] xl:overflow-y-auto">
+    <section data-tour-id="source-video" className="dashboard-stage overflow-hidden rounded-md border border-border-light bg-card shadow-[0_12px_34px_rgba(29,28,27,0.055)] xl:max-h-[calc(100vh-var(--sj-explainability-top)-24px)] xl:overflow-y-auto">
       <div className="grid gap-3 px-5 pb-4 pt-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <div className="flex min-w-0 items-start gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-accent/70 bg-accent-light text-brand-charcoal shadow-[0_6px_16px_rgba(0,220,130,0.12)]">
@@ -4260,7 +4406,7 @@ function WorkspaceExplainabilityRail({
 
   if (collapsed) {
     return (
-      <section className="pointer-events-auto">
+      <section className="dashboard-explainability dashboard-explainability--collapsed pointer-events-auto">
         <button
           type="button"
           onPointerDown={(event) => {
@@ -4290,7 +4436,7 @@ function WorkspaceExplainabilityRail({
   }
 
   return (
-    <section className="overflow-hidden rounded-md border border-border bg-surface shadow-[0_10px_30px_rgba(29,28,27,0.06)] xl:max-h-[calc(100vh-156px)] xl:overflow-y-auto">
+    <section className="dashboard-explainability overflow-hidden rounded-md border border-border bg-surface shadow-[0_10px_30px_rgba(29,28,27,0.06)] xl:max-h-[calc(100vh-156px)] xl:overflow-y-auto">
       <div className="px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
@@ -4393,7 +4539,7 @@ function WorkspaceVideoCarousel({
 
   if (loading && uniqueVideos.length === 0) {
     return (
-      <section className="overflow-hidden rounded-md border border-border bg-card px-5 py-4 shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
+      <section className="dashboard-video-carousel overflow-hidden rounded-md border border-border bg-card px-5 py-4 shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
         <div className="flex items-center gap-3 text-sm font-semibold text-text-secondary">
           <AppIcon name="spinner" className="h-4 w-4 animate-spin text-accent" />
           Loading indexed videos
@@ -4452,7 +4598,7 @@ function WorkspaceVideoCarousel({
   }
 
   return (
-    <section className="relative overflow-hidden rounded-md border border-border bg-card shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
+    <section className="dashboard-video-carousel relative overflow-hidden rounded-md border border-border bg-card shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
       <div
         className="workspace-video-carousel workspace-video-carousel--marquee relative overflow-hidden py-4"
         style={{ '--workspace-marquee-duration': `${marqueeDurationSeconds}s` } as CSSProperties}
@@ -4682,11 +4828,15 @@ function OverviewPage({
               title="How the stack connects"
               lead="Match footage is indexed once in TwelveLabs. Marengo powers search, Pegasus grounds the clip you open, and Jockey Assistant delivers semantic lanes through Discover and Dashboard."
             />
-            <OverviewReservedSlot
-              label="Architecture diagram"
-              detail="A single view of ingest, indexing, models, and the three producer screens that sit on top."
-              minHeightClass="min-h-[220px] sm:min-h-[280px]"
-            />
+            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_10px_28px_rgba(29,28,27,0.045)]">
+              <img
+                src={workflowArchitecture}
+                alt="Sports Jockey architecture workflow from video ingest through search, analysis, and producer workspaces"
+                className="block h-auto w-full"
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
           </section>
 
           <section className="overview-section overview-block">
@@ -4724,7 +4874,7 @@ function OverviewHeroVisual() {
   )
 }
 
-const OVERVIEW_DEMO_VIDEO_ID = '_rXt7w9Djqg'
+const OVERVIEW_DEMO_VIDEO_ID = 'Ch0hhvG_9X8'
 
 const overviewExternalLinks = [
   {
@@ -4961,24 +5111,6 @@ function OverviewFeaturesSection({ features }: { features: typeof overviewFeatur
         ))}
       </div>
     </section>
-  )
-}
-
-function OverviewReservedSlot({
-  label,
-  detail,
-  minHeightClass = 'min-h-[200px] sm:min-h-[220px]',
-}: {
-  label: string
-  detail: string
-  minHeightClass?: string
-}) {
-  return (
-    <div className={['overview-reserved', minHeightClass].join(' ')}>
-      <AppIcon name="canvas" className="h-7 w-7 text-text-tertiary" />
-      <p className="mt-4 text-sm font-semibold text-text-primary">{label}</p>
-      <p className="mt-1.5 max-w-md text-sm leading-6 text-text-secondary">{detail}</p>
-    </div>
   )
 }
 
@@ -5364,8 +5496,16 @@ function DiscoverPage({
   onAnalyzeClip: (item: DiscoverItem) => void
 }) {
   const searchRequestRef = useRef(0)
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null)
+  const entitiesLoadedRef = useRef(false)
   const [searchLoading, setSearchLoading] = useState(false)
+  const [entityPickerOpen, setEntityPickerOpen] = useState(false)
+  const [entityLoading, setEntityLoading] = useState(false)
+  const [entityError, setEntityError] = useState('')
+  const [entities, setEntities] = useState<SearchEntity[]>([])
+  const [createEntityModalOpen, setCreateEntityModalOpen] = useState(false)
   const { searchQuery, submittedSearchQuery, searchResponse, activePreviewId, searchError } = session
+  const searchKind = session.searchKind || 'text'
   const normalizedQuery = normalizeSearchText(submittedSearchQuery)
   const trimmedSearchQuery = submittedSearchQuery.trim()
   const draftSearchQuery = searchQuery.trim()
@@ -5382,7 +5522,130 @@ function DiscoverPage({
     : `${items.length} videos`
   const searchSummary = normalizedQuery
     ? searchResponse?.query_interpretation || 'Matching visual and audio evidence in the footage.'
-    : 'Search source footage for visual and audio moments that are not captured in the event feed.'
+    : `Search ${game?.label || 'source footage'} for visual and audio moments that are not captured in the event feed.`
+
+  useEffect(() => {
+    searchRequestRef.current += 1
+    setSearchLoading(false)
+    entitiesLoadedRef.current = false
+    setEntities([])
+    setEntityPickerOpen(false)
+    setEntityError('')
+    setCreateEntityModalOpen(false)
+  }, [game?.tag])
+
+  const loadEntities = useCallback(async () => {
+    if (!game || entitiesLoadedRef.current || entityLoading) return
+    setEntityLoading(true)
+    setEntityError('')
+    try {
+      const body = await fetchJson<SearchEntityListResponse>(`/games/${encodeURIComponent(game.tag)}/entities`)
+      setEntities(Array.isArray(body.entities) ? body.entities : [])
+      entitiesLoadedRef.current = true
+    } catch (error) {
+      setEntityError(error instanceof Error ? error.message : 'Unable to load entities')
+    } finally {
+      setEntityLoading(false)
+    }
+  }, [entityLoading, game])
+
+  const toggleEntityPicker = useCallback(() => {
+    if (entityPickerOpen) {
+      setEntityPickerOpen(false)
+      return
+    }
+    setEntityPickerOpen(true)
+    void loadEntities()
+  }, [entityPickerOpen, loadEntities])
+
+  const searchByEntity = useCallback(async (entity: SearchEntity) => {
+    if (!game || !entity.id) return
+    const requestId = searchRequestRef.current + 1
+    searchRequestRef.current = requestId
+    setEntityPickerOpen(false)
+    setSearchLoading(true)
+    onSessionChange({
+      searchQuery: entity.name,
+      submittedSearchQuery: entity.name,
+      searchKind: 'entity',
+      searchResponse: null,
+      searchError: '',
+      activePreviewId: null,
+    })
+    try {
+      const body = await fetchJson<MarengoSearchResponse>(`/games/${encodeURIComponent(game.tag)}/search/entity`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entity_id: entity.id,
+          entity_name: entity.name,
+          limit: 12,
+          search_options: ['visual', 'audio'],
+        }),
+      })
+      if (requestId !== searchRequestRef.current) return
+      const searchItems = searchResultItems(game, body)
+      const firstPreview = searchItems.find((item) => item.resultType === 'search')
+      onSessionChange({ searchResponse: body, searchError: '', activePreviewId: firstPreview?.id || null })
+    } catch (error) {
+      if (requestId === searchRequestRef.current) {
+        onSessionChange({ searchResponse: null, searchError: error instanceof Error ? error.message : 'Entity search failed' })
+      }
+    } finally {
+      if (requestId === searchRequestRef.current) setSearchLoading(false)
+    }
+  }, [game, onSessionChange])
+
+  const searchByImage = useCallback(async (file: File) => {
+    if (!game || !file.type.startsWith('image/')) return
+    const requestId = searchRequestRef.current + 1
+    searchRequestRef.current = requestId
+    setSearchLoading(true)
+    const query = file.name || 'uploaded image'
+    onSessionChange({
+      searchQuery: query,
+      submittedSearchQuery: query,
+      searchKind: 'image',
+      searchResponse: null,
+      searchError: '',
+      activePreviewId: null,
+    })
+    const formData = new FormData()
+    formData.set('file', file)
+    formData.set('query', query)
+    formData.set('limit', '12')
+    formData.set('group_by', 'clip')
+    formData.set('search_options', 'visual')
+    try {
+      const body = await fetchJson<MarengoSearchResponse>(`/games/${encodeURIComponent(game.tag)}/search/image`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (requestId !== searchRequestRef.current) return
+      const searchItems = searchResultItems(game, body)
+      const firstPreview = searchItems.find((item) => item.resultType === 'search')
+      onSessionChange({ searchResponse: body, searchError: '', activePreviewId: firstPreview?.id || null })
+    } catch (error) {
+      if (requestId === searchRequestRef.current) {
+        onSessionChange({ searchResponse: null, searchError: error instanceof Error ? error.message : 'Image search failed' })
+      }
+    } finally {
+      if (requestId === searchRequestRef.current) setSearchLoading(false)
+    }
+  }, [game, onSessionChange])
+
+  const handleImageFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    if (file) void searchByImage(file)
+  }, [searchByImage])
+
+  const handleEntityCreated = useCallback((entity: SearchEntity) => {
+    setEntities((current) => [entity, ...current.filter((item) => item.id !== entity.id)])
+    entitiesLoadedRef.current = true
+    setCreateEntityModalOpen(false)
+    setEntityPickerOpen(true)
+  }, [])
 
   useEffect(() => {
     if (!normalizedQuery) {
@@ -5408,6 +5671,7 @@ function DiscoverPage({
     searchRequestRef.current += 1
     onSessionChange({
       submittedSearchQuery: nextQuery,
+      searchKind: 'text',
       searchResponse: null,
       searchError: '',
       activePreviewId: null,
@@ -5432,6 +5696,7 @@ function DiscoverPage({
     onSessionChange({
       searchQuery: preset,
       submittedSearchQuery: preset,
+      searchKind: 'text',
       searchResponse: null,
       searchError: '',
       activePreviewId: null,
@@ -5439,8 +5704,7 @@ function DiscoverPage({
   }, [onSessionChange])
 
   useEffect(() => {
-    if (!game || !trimmedSearchQuery) {
-      setSearchLoading(false)
+    if (!game || !trimmedSearchQuery || searchKind !== 'text') {
       return
     }
 
@@ -5490,7 +5754,7 @@ function DiscoverPage({
       window.clearTimeout(timeout)
       controller.abort()
     }
-  }, [game, onSessionChange, trimmedSearchQuery])
+  }, [game, onSessionChange, searchKind, trimmedSearchQuery])
 
   if (error) {
     return (
@@ -5517,13 +5781,16 @@ function DiscoverPage({
         <header className="discover-page-header">
           <div className="discover-page-intro min-w-0">
             <div className="discover-page-kicker inline-flex items-center rounded-full bg-accent-light font-semibold uppercase text-brand-charcoal">
-              Marengo Search
+              TwelveLabs Search
             </div>
             <h2 className="discover-page-title mt-5 max-w-4xl font-semibold leading-tight text-text-primary">
-              {normalizedQuery ? submittedSearchQuery : game.label}
+              {normalizedQuery ? submittedSearchQuery : 'Find visual and audio moments'}
             </h2>
             <p className="discover-page-lead mt-3 max-w-3xl text-text-secondary">{searchSummary}</p>
           </div>
+          <span className="discover-search-result-count rounded-md border border-border bg-card px-2.5 py-1 font-mono text-xs font-semibold uppercase text-text-secondary">
+            {resultLabel}
+          </span>
         </header>
 
         <DiscoverSearchPanel
@@ -5531,12 +5798,37 @@ function DiscoverPage({
           onChange={updateSearchQuery}
           onSubmit={submitSearch}
           onClear={clearSearch}
-          resultLabel={resultLabel}
           searchLoading={searchLoading}
           canSearch={Boolean(draftSearchQuery) && !searchLoading}
           canClear={hasActiveSearch && !searchLoading}
           presets={marengoSearchPresets}
           onPresetSelect={selectPreset}
+          onAddImage={() => imageFileInputRef.current?.click()}
+          onAddEntity={toggleEntityPicker}
+          entityPickerOpen={entityPickerOpen}
+          entityLoading={entityLoading}
+          entityError={entityError}
+          entities={entities}
+          onEntitySelect={searchByEntity}
+          onCreateEntity={() => {
+            setEntityPickerOpen(false)
+            setCreateEntityModalOpen(true)
+          }}
+        />
+
+        <input
+          ref={imageFileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/jpg"
+          className="sr-only"
+          onChange={handleImageFileChange}
+        />
+
+        <CreateEntityModal
+          open={createEntityModalOpen}
+          gameTag={game?.tag || ''}
+          onClose={() => setCreateEntityModalOpen(false)}
+          onCreated={handleEntityCreated}
         />
 
         <section className="discover-page-results min-w-0">
@@ -5604,23 +5896,37 @@ function DiscoverSearchPanel({
   onChange,
   onSubmit,
   onClear,
-  resultLabel,
   searchLoading,
   canSearch,
   canClear,
   presets,
   onPresetSelect,
+  onAddImage,
+  onAddEntity,
+  entityPickerOpen,
+  entityLoading,
+  entityError,
+  entities,
+  onEntitySelect,
+  onCreateEntity,
 }: {
   value: string
   onChange: (value: string) => void
   onSubmit: () => void
   onClear: () => void
-  resultLabel: string
   searchLoading: boolean
   canSearch: boolean
   canClear: boolean
   presets: string[]
   onPresetSelect: (value: string) => void
+  onAddImage: () => void
+  onAddEntity: () => void
+  entityPickerOpen: boolean
+  entityLoading: boolean
+  entityError: string
+  entities: SearchEntity[]
+  onEntitySelect: (entity: SearchEntity) => void
+  onCreateEntity: () => void
 }) {
   return (
     <div data-tour-id="marengo-search" className="discover-search-panel">
@@ -5628,9 +5934,9 @@ function DiscoverSearchPanel({
         Search source videos
       </label>
       <div className="discover-search-main">
-        <div className="discover-search-field">
+        <div className="discover-search-field relative">
           <div className="discover-search-input-wrap rounded-md border border-border bg-surface focus-within:border-accent">
-            <AppIcon name={searchLoading ? 'spinner' : 'search'} className={['discover-search-input-icon shrink-0 text-text-tertiary', searchLoading ? 'animate-spin' : ''].join(' ')} />
+            <AppIcon name={searchLoading ? 'spinner' : 'search-v2'} className={['discover-search-input-icon shrink-0 text-text-tertiary', searchLoading ? 'animate-spin' : ''].join(' ')} />
             <input
               id="discover-search"
               value={value}
@@ -5642,6 +5948,27 @@ function DiscoverSearchPanel({
               className="discover-search-input min-w-0 flex-1 bg-transparent font-medium text-text-primary outline-none placeholder:text-text-tertiary"
               placeholder="Search visual/audio moments - player celebration, crowd roar, diving save..."
             />
+            <div className="discover-search-input-actions">
+              <button
+                type="button"
+                onClick={onAddImage}
+                className="discover-search-tool inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card font-semibold text-text-primary hover:border-accent hover:bg-accent-light"
+              >
+                <AppIcon name="canvas" className="h-4 w-4 shrink-0" />
+                <span>Add Image</span>
+              </button>
+              <button
+                type="button"
+                onClick={onAddEntity}
+                className="discover-search-tool inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card font-semibold text-text-primary hover:border-accent hover:bg-accent-light"
+                aria-expanded={entityPickerOpen}
+                aria-haspopup="listbox"
+              >
+                <AppIcon name="entity-collection" className="h-4 w-4 shrink-0" />
+                <span>Add Entity</span>
+                <span className="discover-search-beta rounded border border-border px-1 py-0.5 text-[10px] font-bold uppercase leading-none text-text-tertiary">Beta</span>
+              </button>
+            </div>
             {value && (
               <button
                 type="button"
@@ -5654,6 +5981,15 @@ function DiscoverSearchPanel({
               </button>
             )}
           </div>
+          {entityPickerOpen && (
+            <EntityPicker
+              entities={entities}
+              loading={entityLoading}
+              error={entityError}
+              onSelect={onEntitySelect}
+              onCreate={onCreateEntity}
+            />
+          )}
           <div className="discover-search-actions">
             <button
               type="button"
@@ -5697,7 +6033,241 @@ function DiscoverSearchPanel({
       </div>
 
       <div className="discover-search-meta font-semibold uppercase text-text-tertiary">
-        <span>{resultLabel}</span>
+        <span>Press Enter to search, or type @ to mention an entity.</span>
+      </div>
+    </div>
+  )
+}
+
+function EntityPicker({
+  entities,
+  loading,
+  error,
+  onSelect,
+  onCreate,
+}: {
+  entities: SearchEntity[]
+  loading: boolean
+  error: string
+  onSelect: (entity: SearchEntity) => void
+  onCreate: () => void
+}) {
+  return (
+    <div className="discover-entity-picker" role="listbox" aria-label="Search entities">
+      <div className="discover-entity-picker-list">
+        {loading ? (
+          <div className="discover-entity-picker-state">
+            <AppIcon name="spinner" className="h-4 w-4 animate-spin" />
+            Loading entities
+          </div>
+        ) : error ? (
+          <div className="discover-entity-picker-state discover-entity-picker-state--error">
+            <AppIcon name="warning" className="h-4 w-4" />
+            {error}
+          </div>
+        ) : entities.length ? (
+          entities.map((entity) => (
+            <button
+              key={entity.id}
+              type="button"
+              role="option"
+              onClick={() => onSelect(entity)}
+              className="discover-entity-picker-item"
+            >
+              <span className="discover-entity-picker-avatar">
+                {entity.image_url ? (
+                  <img src={apiUrl(entity.image_url)} alt="" loading="lazy" />
+                ) : (
+                  <AppIcon name="members" className="h-5 w-5 text-text-tertiary" />
+                )}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-left">{entity.name}</span>
+            </button>
+          ))
+        ) : (
+          <div className="discover-entity-picker-state">No entities found in this collection.</div>
+        )}
+      </div>
+      <button type="button" onClick={onCreate} className="discover-entity-picker-create">
+        <AppIcon name="plus" className="h-5 w-5" />
+        <span>Create New Entity</span>
+      </button>
+    </div>
+  )
+}
+
+function CreateEntityModal({
+  open,
+  gameTag,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  gameTag: string
+  onClose: () => void
+  onCreated: (entity: SearchEntity) => void
+}) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [name, setName] = useState('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreview('')
+      return undefined
+    }
+    const previewUrl = window.URL.createObjectURL(imageFile)
+    setImagePreview(previewUrl)
+    return () => window.URL.revokeObjectURL(previewUrl)
+  }, [imageFile])
+
+  useEffect(() => {
+    if (open) return
+    setName('')
+    setImageFile(null)
+    setError('')
+    setCreating(false)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !creating) onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [creating, onClose, open])
+
+  const selectImage = useCallback((file?: File | null) => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose a PNG or JPEG image.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Entity images must be 5 MB or smaller.')
+      return
+    }
+    setError('')
+    setImageFile(file)
+  }, [])
+
+  const createEntity = useCallback(async () => {
+    if (!gameTag || !name.trim() || !imageFile || creating) return
+    setCreating(true)
+    setError('')
+    const formData = new FormData()
+    formData.set('name', name.trim())
+    formData.set('file', imageFile)
+    try {
+      const body = await fetchJson<SearchEntityCreateResponse>(`/games/${encodeURIComponent(gameTag)}/entities`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (!body.entity) throw new Error('The backend did not return the created entity.')
+      onCreated(body.entity)
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Unable to create entity')
+    } finally {
+      setCreating(false)
+    }
+  }, [creating, gameTag, imageFile, name, onCreated])
+
+  if (!open) return null
+
+  return (
+    <div className="discover-entity-modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !creating) onClose()
+    }}>
+      <div
+        className="discover-entity-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-entity-title"
+      >
+        <div className="discover-entity-modal-header">
+          <h2 id="create-entity-title">New entity</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={creating}
+            className="discover-entity-modal-close"
+            aria-label="Close new entity dialog"
+          >
+            <AppIcon name="close" className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="discover-entity-modal-body">
+          <label htmlFor="new-entity-name" className="discover-entity-modal-label">Name</label>
+          <input
+            id="new-entity-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="e.g. John Doe"
+            autoFocus
+            className="discover-entity-modal-name"
+          />
+
+          <div className="discover-entity-modal-image-heading">
+            <h3>Images</h3>
+            <span aria-label="An image is required">!</span>
+          </div>
+          <p className="discover-entity-modal-help">Add an image that you want to use as your entity</p>
+
+          <input
+            ref={fileInputRef}
+            id="new-entity-image"
+            type="file"
+            accept="image/png,image/jpeg,image/jpg"
+            className="sr-only"
+            onChange={(event) => {
+              selectImage(event.currentTarget.files?.[0])
+              event.currentTarget.value = ''
+            }}
+          />
+          <label
+            htmlFor="new-entity-image"
+            className={['discover-entity-upload', imagePreview ? 'discover-entity-upload--selected' : ''].join(' ')}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault()
+              selectImage(event.dataTransfer.files?.[0])
+            }}
+          >
+            {imagePreview ? (
+              <img src={imagePreview} alt="Selected entity" className="discover-entity-upload-preview" />
+            ) : (
+              <>
+                <AppIcon name="canvas" className="h-9 w-9" />
+                <strong>Drop an image or browse file</strong>
+                <span>Supported formats</span>
+                <span className="discover-entity-upload-rules">
+                  <span>.png, .jpeg</span>
+                  <span>Dimension &gt; 128x128px</span>
+                  <span>File size &lt;= 5 MB</span>
+                </span>
+              </>
+            )}
+          </label>
+
+          {error && <p className="discover-entity-modal-error">{error}</p>}
+        </div>
+
+        <div className="discover-entity-modal-footer">
+          <button type="button" onClick={onClose} disabled={creating} className="discover-entity-modal-cancel">Cancel</button>
+          <button
+            type="button"
+            onClick={() => void createEntity()}
+            disabled={!name.trim() || !imageFile || creating}
+            className="discover-entity-modal-create"
+          >
+            {creating ? 'Creating…' : 'Create'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -6634,7 +7204,7 @@ function StatusStrip({
   }
   if (selectedSearchMoment) {
     return (
-      <section className="overflow-hidden rounded-md border border-border bg-white shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
+      <section className="dashboard-status-card overflow-hidden rounded-md border border-border bg-white shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
         <div className="grid gap-4 bg-white px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.08em] text-text-tertiary">Selected video</p>
@@ -6698,7 +7268,7 @@ function StatusStrip({
       reels.fan_experience.clips.length +
       reels.behind_the_scenes.clips.length
     return (
-      <section className="overflow-hidden rounded-md border border-border bg-white shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
+      <section className="dashboard-status-card overflow-hidden rounded-md border border-border bg-white shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
         <div className="grid gap-4 bg-white px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.08em] text-text-tertiary">Source video</p>
@@ -8124,7 +8694,7 @@ function EntityTrackingSection({
   }
 
   return (
-    <section id="entity-tracking" data-tour-id="entity-tracking" className="scroll-mt-[calc(var(--sj-explainability-top)+24px)] overflow-hidden rounded-md border border-border bg-surface shadow-[0_10px_28px_rgba(29,28,27,0.045)]">
+    <section id="entity-tracking" data-tour-id="entity-tracking" className="dashboard-entity-section scroll-mt-[calc(var(--sj-explainability-top)+24px)] overflow-hidden rounded-md border border-border bg-surface shadow-[0_10px_28px_rgba(29,28,27,0.045)]">
       <div className={['relative grid gap-4 overflow-hidden bg-card px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start', collapsed ? '' : 'border-b border-border-light'].join(' ')}>
         <span className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-accent via-[#DFF43F] to-[#FF8BC7]" aria-hidden="true" />
         <div className="min-w-0 pt-1">
@@ -9013,7 +9583,7 @@ function ReelBuilder({
   const lastClip = category.clips[category.clips.length - 1]
   const reelRange = firstClip && lastClip ? `${firstClip.start_time} - ${lastClip.start_time}` : 'No clips'
   return (
-    <section data-tour-id="tag-reels" className="overflow-hidden rounded-md border border-border bg-surface shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
+    <section id="tag-reels" data-tour-id="tag-reels" className="overflow-hidden rounded-md border border-border bg-surface shadow-[0_8px_24px_rgba(29,28,27,0.045)]">
       <div className="grid gap-4 border-b border-border-light bg-surface px-5 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.72fr)] xl:items-end">
         <div className="min-w-0">
           <div className="flex min-w-0 items-start gap-3">
@@ -10427,7 +10997,7 @@ function formatUploadDuration(totalSeconds: number) {
 }
 
 function apiUrl(path: string) {
-  if (/^https?:\/\//.test(path)) return path
+  if (/^(?:https?:|data:|blob:)/.test(path)) return path
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${API_BASE_URL}${normalizedPath}`
 }
