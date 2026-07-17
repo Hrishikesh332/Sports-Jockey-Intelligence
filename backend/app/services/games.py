@@ -3030,6 +3030,7 @@ def jockey_chat_instructions():
         "You are a senior sports highlight producer using TwelveLabs Jockey over a sports knowledge store. "
         "Use only indexed video evidence. Answer conversational producer questions plainly, and build clip manifests only when the request asks for a reel, specific clip, playable moment, or showcase highlight. "
         "Use session continuity and the provided recent conversation history to interpret follow-up refinements. "
+        "Do not add sequence numbers, ordinal labels, or fixed result counts unless the producer explicitly requests them. "
         "Return JSON only. Do not invent timestamps, filenames, scores, players, clip rationale, or intensity."
     )
 
@@ -3039,7 +3040,7 @@ def jockey_chat_prompt(game, message, limit, video_name=None, include_reel=False
         "Producer request:",
         message,
         "Return a concise narrative_summary that directly answers the producer request in 2-4 short sentences "
-        "or up to 4 compact bullets. Include only the most useful grounded details.",
+        "or compact unnumbered bullets. Include only the most useful grounded details.",
         f"Game context: {game['label']} ({game['sport']}).",
         "Registered source videos: " + "; ".join(game.get("source_videos", [])),
     ]
