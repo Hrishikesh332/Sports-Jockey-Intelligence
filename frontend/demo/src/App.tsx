@@ -4961,8 +4961,8 @@ const OVERVIEW_DEMO_VIDEO_ID = 'Ch0hhvG_9X8'
 
 const overviewExternalLinks = [
   {
-    label: 'Code Repo',
-    href: 'https://github.com/Hrishikesh332/Sports-Semantic-Jockey',
+    label: 'GitHub Repo',
+    href: 'https://github.com/Hrishikesh332/Sports-Jockey-Intelligence',
   },
   {
     label: 'Talk to Sales',
